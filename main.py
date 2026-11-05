@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from itertools import count
 from PIL import Image
 from os import path as opath
-from preprocessing import edges
+from mypylibs import edges
 
 ROOT_IN = 'in'
 ROOT_OUT = 'out'
