@@ -4,8 +4,8 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
-    { name = "Cormac Shannon", email = "git@nik.ie" }
-    { name = "Nanda V.", email = "" }
+    { name = "Cormac Shannon", email = "git@nik.ie" },
+    { name = "Nanda V.", email = "" },
     { name = "Dylan Teehan", email = "" }
 ]
 requires-python = ">=3.14"
