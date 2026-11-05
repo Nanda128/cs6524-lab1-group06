@@ -8,3 +8,6 @@
 *.run.xml
 *.pdf
 __pycache__
+.idea/
+.vscode/
+venv/
