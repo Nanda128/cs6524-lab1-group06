@@ -1,80 +1,78 @@
-"""Canny-style edge detection built from linear filters + scipy.ndimage.
-
-Pipeline: per-channel Gaussian blur -> colour gradient (Di Zenzo) ->
-non-maximum suppression -> hysteresis thresholding -> gap closing ->
-silhouette mask -> 1 px border.
-"""
 import numpy as np
 from scipy import ndimage
 
-from . import filters
+BLUR_SIGMA = 2
+MASK_SIGMA = 2
+KERNEL_RADIUS_IN_SIGMAS = 3
+RING_WIDTH = 10
+THRESHOLD = 0.15
+
+SOBEL_X = np.array([[-1, 0, 1],
+                    [-2, 0, 2],
+                    [-1, 0, 1]])
+SOBEL_Y = SOBEL_X.T
 
 
-def color_gradient(rgb, sigma):
-    """Gradient magnitude and direction using all colour channels.
-
-    Di Zenzo: build the 2x2 structure tensor summed over channels and take
-    its dominant eigenvalue/orientation. Catches edges that are invisible
-    in grayscale (e.g. red vs. green of equal luma).
-    """
-    rgb = np.asarray(rgb, dtype=float)[..., :3] / 255.0
-    gxx = gyy = gxy = 0.0
-    for c in range(3):
-        ch = filters.gaussian_blur(rgb[..., c], sigma=sigma)
-        _, gx, gy = filters.sobel(ch)
-        gxx = gxx + gx * gx
-        gyy = gyy + gy * gy
-        gxy = gxy + gx * gy
-    theta = 0.5 * np.arctan2(2 * gxy, gxx - gyy)  # gradient direction
-    lam = 0.5 * (gxx + gyy + np.sqrt((gxx - gyy) ** 2 + 4 * gxy ** 2))
-    return np.sqrt(lam), theta
+def build_gaussian_kernel(sigma):
+    radius = int(np.ceil(KERNEL_RADIUS_IN_SIGMAS * sigma))
+    offsets = np.arange(-radius, radius + 1)
+    x, y = np.meshgrid(offsets, offsets)
+    kernel = np.exp(-(x**2 + y**2) / (2 * sigma**2))
+    return kernel / kernel.sum()
 
 
-def non_max_suppression(mag, theta):
-    """Keep only pixels that are local maxima along the gradient direction."""
-    h, w = mag.shape
-    yy, xx = np.mgrid[0:h, 0:w]
-    dx = np.cos(theta)
-    dy = np.sin(theta)
-    # sample magnitude one pixel ahead and behind along the gradient
-    ahead = ndimage.map_coordinates(mag, [yy + dy, xx + dx], order=1, mode='nearest')
-    behind = ndimage.map_coordinates(mag, [yy - dy, xx - dx], order=1, mode='nearest')
-    return np.where((mag >= ahead) & (mag >= behind), mag, 0.0)
+def gaussian_blur(image, sigma):
+    return ndimage.convolve(image, build_gaussian_kernel(sigma), mode='nearest')
 
 
-def hysteresis(nms, low, high):
-    """Keep weak edges (> low) only if connected to a strong one (> high)."""
-    strong = nms > high
-    weak = nms > low
-    labels, n = ndimage.label(weak, structure=np.ones((3, 3)))
-    if n == 0:
-        return strong
-    keep = np.zeros(n + 1, dtype=bool)
-    keep[np.unique(labels[strong])] = True
-    keep[0] = False
-    return keep[labels]
+def blur_colour_image(rgb, sigma):
+    layers = [gaussian_blur(rgb[:, :, layer], sigma) for layer in range(3)]
+    return np.dstack(layers).clip(0, 1)
 
 
-def canny(rgb, sigma=2.0, low=0.1, high=0.3):
-    """low/high are fractions of the maximum gradient after NMS."""
-    mag, theta = color_gradient(rgb, sigma)
-    nms = non_max_suppression(mag, theta)
-    m = nms.max()
-    if m == 0:
-        return np.zeros_like(nms, dtype=bool), mag
-    return hysteresis(nms, low * m, high * m), mag
+def background_colour(rgb):
+    w = RING_WIDTH
+    ring = np.concatenate([rgb[:w].reshape(-1, 3), rgb[-w:].reshape(-1, 3),
+                           rgb[w:-w, :w].reshape(-1, 3), rgb[w:-w, -w:].reshape(-1, 3)])
+    return np.median(ring, axis=0)
 
 
-def silhouette_from_edges(edges, close_radius=3):
-    """Close gaps in an edge map and return a filled silhouette mask.
+def colour_distance(rgb, colour):
+    return np.sqrt(((rgb - colour)**2).sum(axis=2) / 3)
 
-    Edges are dilated until gaps seal, interior is filled, the largest
-    region kept, then eroded back so the outline doesn't grow outward.
-    """
-    st = ndimage.generate_binary_structure(2, 2)
-    closed = ndimage.binary_dilation(edges, structure=st, iterations=close_radius)
-    # Pad so shapes touching the frame can still be filled
-    padded = np.pad(closed, 1, constant_values=False)
-    filled = ndimage.binary_fill_holes(padded)[1:-1, 1:-1]
-    filled = ndimage.binary_erosion(filled, structure=st, iterations=close_radius)
-    return filters.clean_mask(filled)
+
+def keep_largest_object(mask):
+    labels, blobs = ndimage.label(mask, structure=np.ones((3, 3)))
+    if blobs == 0:
+        return mask
+    sizes = np.bincount(labels.ravel())
+    sizes[0] = 0  # label 0 is the background
+    return ndimage.binary_fill_holes(labels == sizes.argmax())
+
+
+def sobel_magnitude(mask):
+    image = mask.astype(float)
+    return np.hypot(ndimage.convolve(image, SOBEL_X, mode='constant'),
+                    ndimage.convolve(image, SOBEL_Y, mode='constant'))
+
+
+def preprocess(rgb):
+    blurred = blur_colour_image(rgb, BLUR_SIGMA)
+    distance = colour_distance(blurred, background_colour(rgb))
+    mask = distance > THRESHOLD
+    obj = keep_largest_object(mask)
+    smooth = gaussian_blur(obj.astype(float), MASK_SIGMA) > 0.5
+    strength = sobel_magnitude(smooth)
+    border = (strength > 0) & smooth
+
+    stages = [
+        ('Original', rgb),
+        (f'Gaussian blur, sigma {BLUR_SIGMA}', blurred),
+        ('Distance from background', distance),
+        (f'Threshold at {THRESHOLD}', mask),
+        ('Largest object, holes filled', obj),
+        (f'Mask smoothed, sigma {MASK_SIGMA}', smooth),
+        ('Sobel magnitude', strength),
+        ('Border', border),
+    ]
+    return stages, border
