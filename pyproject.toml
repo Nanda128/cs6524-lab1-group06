@@ -16,9 +16,6 @@ dependencies = [
     "scipy>=1.18.1",
 ]
 
-[project.scripts]
-vision-cs6524-lab1-group06 = "vision_cs6524_lab1_group06:main"
-
 [build-system]
 requires = ["uv_build>=0.13.6,<0.14.0"]
 build-backend = "uv_build"

@@ -18,10 +18,18 @@ jobs:
           -v ${{ github.workspace }}:/workspace \
           jfhernandeza/ul-cs6524-cv-python-latex:lab01 sh -c "pip install -r requirements.txt && python main.py"
       
-      - name: Upload Output Artifacts
+      - name: Compile LaTeX Document (report.tex)
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            jfhernandeza/ul-cs6524-cv-python-latex:lab01 latexmk -pdf -interaction=nonstopmode -halt-on-error report.tex
+
+      - name: Upload Report and Output Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: cs6524-cv-lab-artifacts
-          path: out/
+          path: |
+            report.pdf
+            out/
           overwrite: true
           if-no-files-found: warn
